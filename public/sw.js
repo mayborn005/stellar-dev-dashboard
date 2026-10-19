@@ -12,7 +12,10 @@
  *   stellar-api-v3          Cacheable Horizon / Soroban GET responses
  *
  * Messaging protocol (postMessage from client):
- *   { type: 'SKIP_WAITING' }             — activate immediately
+ *   { type: 'SKIP_WAITING' }             — activate immediately (legacy)
+ *   { type: 'RESUME_ACTIVATION' }        — activate immediately (clears deferral)
+ *   { type: 'DEFER_ACTIVATION' }         — postpone activation (client is in a
+ *                                          critical signing flow, #886)
  *   { type: 'CACHE_PUT', url, data }     — store a pre-fetched value
  *   { type: 'CACHE_DELETE', url }        — evict a specific URL
  *   { type: 'CACHE_CLEAR_API' }          — flush the API cache bucket
@@ -20,14 +23,15 @@
  *   { type: 'WARM_URLS', urls }          — pre-fetch a list of URLs into API cache
  */
 
-
-const SHELL_CACHE  = 'stellar-shell-v3';
-const API_CACHE    = 'stellar-api-v3';
+const SHELL_CACHE  = 'stellar-shell-v4';
+const API_CACHE    = 'stellar-api-v4';
 const OLD_CACHES   = [
   'stellar-shell-v1',
   'stellar-shell-v2',
+  'stellar-shell-v3',
   'stellar-api-v1',
   'stellar-api-v2',
+  'stellar-api-v3',
 ];
 
 // ─── App shell assets ──────────────────────────────────────────────────────────
@@ -61,6 +65,14 @@ const API_CACHE_TTL_MS = 30_000; // 30 s
 // Max entries in the API cache bucket before oldest entries are evicted
 const API_CACHE_MAX_ENTRIES = 150;
 
+// ─── Deferred activation state (#886) ─────────────────────────────────────────
+// A client in a critical signing flow asks us to postpone activation so the
+// signature is not interrupted by a controller transition. The worker stays in
+// the browser's "waiting" state until RESUME_ACTIVATION (or legacy
+// SKIP_WAITING) arrives — the browser then moves it to active, fires the
+// activate handler below, and the controlled pages reload into the new version.
+let activationDeferred = false;
+
 // ─── Stats counters ───────────────────────────────────────────────────────────
 const stats = {
   shellHits: 0,
@@ -86,16 +98,48 @@ function isCacheableApi(url) {
 }
 
 /**
- * Wrap a Response with a custom expiry timestamp header so we can
- * validate TTL when reading from the SW cache.
+ * True when a URL targets a Horizon/Soroban account endpoint.
+ * Account data is the primary surface for offline read-only mode.
+ */
+function isAccountUrl(url) {
+  try {
+    return /\/accounts\/[A-Za-z0-9]+/.test(new URL(url).pathname);
+  } catch { return false; }
+}
+
+/**
+ * Wrap a Response with stamped headers:
+ *   x-sw-expires          — numeric epoch expiry (existing)
+ *   x-sw-data-source      — 'network' | 'cache' | 'cache-stale'
+ *   x-sw-cached-at        — epoch ms when the entry was first stored
+ *   x-sw-is-account       — '1' for account endpoints
  */
 function stampedResponse(response, ttlMs = API_CACHE_TTL_MS) {
   const expires = Date.now() + ttlMs;
   const headers = new Headers(response.headers);
   headers.set('x-sw-expires', String(expires));
+  headers.set('x-sw-data-source', 'network');
+  headers.set('x-sw-cached-at', String(Date.now()));
+  if (isAccountUrl(response.url)) {
+    headers.set('x-sw-is-account', '1');
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
+    headers,
+  });
+}
+
+/**
+ * Copy a cached Response and re-stamp its data-source header so callers can
+ * tell this payload came from cache rather than the live network.
+ */
+function restampCachedResponse(cached, fresh = false) {
+  const headers = new Headers(cached.headers);
+  headers.set('x-sw-data-source', fresh ? 'cache' : 'cache-stale');
+  return new Response(cached.body, {
+    status: cached.status,
+    statusText: cached.statusText,
     headers,
   });
 }
@@ -175,9 +219,10 @@ self.addEventListener('fetch', (event) => {
       caches.open(API_CACHE).then(async (apiCache) => {
         // Try L3 cache first
         const cached = await apiCache.match(request);
-        if (cached && isFreshResponse(cached)) {
+        const freshHit = cached && isFreshResponse(cached);
+        if (freshHit) {
           stats.apiHits++;
-          return cached;
+          return restampCachedResponse(cached, true);
         }
 
         // Network fetch with TTL stamp
@@ -193,7 +238,7 @@ self.addEventListener('fetch', (event) => {
         } catch {
           stats.networkErrors++;
           // Return stale data if available, even if expired
-          if (cached) return cached;
+          if (cached) return restampCachedResponse(cached, false);
           throw new Error('Network unavailable and no cached response');
         }
       }),
@@ -278,7 +323,23 @@ self.addEventListener('message', (event) => {
   if (!msg) return;
 
   switch (msg.type) {
+    // #886 — Postpone activation while a critical signing flow is active.
+    // The worker remains in the waiting state; the browser will not activate
+    // it until we are told to resume. Never auto-activates on a timer.
+    case 'DEFER_ACTIVATION':
+      activationDeferred = true;
+      break;
+
+    // Activate immediately and clear any pending deferral.
+    case 'RESUME_ACTIVATION':
+      activationDeferred = false;
+      self.skipWaiting();
+      break;
+
+    // Legacy immediate activation (pre-#886 clients). Clearing the deferral
+    // flag keeps the two paths consistent.
     case 'SKIP_WAITING':
+      activationDeferred = false;
       self.skipWaiting();
       break;
 
@@ -290,6 +351,9 @@ self.addEventListener('message', (event) => {
             headers: {
               'Content-Type': 'application/json',
               'x-sw-expires': String(Date.now() + (msg.ttl || API_CACHE_TTL_MS)),
+              'x-sw-data-source': 'cache',
+              'x-sw-cached-at': String(Date.now()),
+              ...(isAccountUrl(msg.url) ? { 'x-sw-is-account': '1' } : {}),
             },
           });
           cache.put(msg.url, response);

@@ -6,45 +6,15 @@
  * Closes on nav-item tap, backdrop click, and Escape key.
  */
 
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useStore } from "../../lib/store";
 import { useSwipeGesture } from "../../hooks/useSwipeGesture";
+import { getMobileNavGroups, type RouteGroup } from "../../routes/routes";
+import { loadCollapsedSidebarGroups, saveCollapsedSidebarGroups } from "../../lib/sidebarPreferences";
 
-interface NavItem {
-  id: string;
-  label: string;
-  icon: string;
-}
-
-const NAV_ITEMS: NavItem[] = [
-  { id: "overview", label: "Overview", icon: "◈" },
-  { id: "account", label: "Account", icon: "◉" },
-  { id: "compare", label: "Compare", icon: "◫" },
-  { id: "transactions", label: "Transactions", icon: "⇄" },
-  { id: "contracts", label: "Contracts", icon: "◻" },
-  { id: "assets", label: "Assets", icon: "💎" },
-  { id: "network", label: "Network", icon: "◎" },
-  { id: "validatorPredictor", label: "Validator AI", icon: "🛡️" },
-  { id: "realtime", label: "Real-Time", icon: "◉" },
-  { id: "builder", label: "Builder", icon: "⚒" },
-  { id: "faucet", label: "Faucet", icon: "⬡" },
-  { id: "wallet", label: "Wallet", icon: "⊡" },
-  { id: "signer", label: "Signer", icon: "✎" },
-  { id: "multisig", label: "Multisig", icon: "⊕" },
-  { id: "portfolio", label: "Portfolio", icon: "◐" },
-  { id: "autonomousTrading", label: "Trading Agent", icon: "🤖" },
-  { id: "charts", label: "Charts", icon: "▤" },
-  { id: "dataStorytelling", label: "Data Stories", icon: "📖" },
-  { id: "designSystem", label: "Design System", icon: "◈" },
-  { id: "featureFlags", label: "Flags", icon: "🚩" },
-  { id: "collaboration", label: "Collaboration", icon: "◌" },
-  { id: "txPatterns", label: "AI Patterns", icon: "🧠" },
-  { id: "contractRecommendations", label: "Contract AI", icon: "💡" },
-  { id: "personalization", label: "AI Personalization", icon: "🧠" },
-  { id: "security", label: "Security", icon: "🛡️" },
-  { id: "dependencyManagement", label: "Dependencies", icon: "📦" },
-];
+// Resolved from the single route registry (#959) — no parallel nav list here.
+const MOBILE_NAV_GROUPS = getMobileNavGroups();
 
 /**
  * Hamburger button shown in the mobile top-bar.
@@ -97,6 +67,11 @@ export default function MobileSidebar() {
   const { activeTab, isMobileMenuOpen, setMobileMenuOpen, theme, toggleTheme, network } =
     useStore();
   const drawerRef = useRef<HTMLElement>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<RouteGroup[]>(loadCollapsedSidebarGroups);
+
+  useEffect(() => {
+    saveCollapsedSidebarGroups(collapsedGroups);
+  }, [collapsedGroups]);
 
   const close = useCallback(() => setMobileMenuOpen(false), [setMobileMenuOpen]);
 
@@ -116,6 +91,14 @@ export default function MobileSidebar() {
   const handleNavClick = (tabId: string) => {
     navigate(`/${tabId}`);
     close();
+  };
+
+  const toggleGroup = (group: RouteGroup) => {
+    setCollapsedGroups((current) => {
+      return current.includes(group)
+        ? current.filter((collapsed) => collapsed !== group)
+        : [...current, group];
+    });
   };
 
   // Close on Escape
@@ -227,39 +210,75 @@ export default function MobileSidebar() {
             flexGrow: 1,
           }}
         >
-          {NAV_ITEMS.map((item) => {
-            const isActive = activeTab === item.id;
+          {MOBILE_NAV_GROUPS.map((group) => {
+            const isCollapsed = collapsedGroups.includes(group.group);
+            const routesId = `mobile-workspace-${group.group}`;
             return (
-              <li key={item.id}>
+              <li key={group.group}>
                 <button
                   type="button"
-                  aria-current={isActive ? "page" : undefined}
-                  onClick={() => handleNavClick(item.id)}
+                  aria-expanded={!isCollapsed}
+                  aria-controls={routesId}
+                  onClick={() => toggleGroup(group.group)}
                   style={{
                     width: "100%",
                     display: "flex",
                     alignItems: "center",
-                    gap: "12px",
-                    padding: "10px 12px",
-                    borderRadius: "var(--radius-md)",
+                    justifyContent: "space-between",
+                    padding: "14px 12px 8px",
                     border: "none",
-                    background: isActive ? "var(--cyan-glow-sm)" : "transparent",
-                    color: isActive ? "var(--cyan)" : "var(--text-secondary)",
+                    background: "transparent",
+                    color: "var(--text-muted)",
                     cursor: "pointer",
-                    fontSize: "13px",
-                    fontFamily: "var(--font-display)",
-                    fontWeight: isActive ? 600 : 400,
+                    fontSize: "10px",
+                    fontFamily: "var(--font-mono)",
+                    fontWeight: 700,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
                     textAlign: "left",
-                    minHeight: "var(--touch-target)",
-                    transition: "var(--transition)",
-                    borderLeft: isActive ? "2px solid var(--cyan)" : "2px solid transparent",
                   }}
                 >
-                  <span aria-hidden="true" style={{ fontSize: "16px", minWidth: "20px", textAlign: "center" }}>
-                    {item.icon}
-                  </span>
-                  {item.label}
+                  {group.label}
+                  <span aria-hidden="true">{isCollapsed ? "+" : "−"}</span>
                 </button>
+                <ul id={routesId} role="list" hidden={isCollapsed} style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                  {group.routes.map((item) => {
+                    const isActive = activeTab === item.id;
+                    return (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          aria-current={isActive ? "page" : undefined}
+                          onClick={() => handleNavClick(item.id)}
+                          style={{
+                            width: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "12px",
+                            padding: "10px 12px",
+                            borderRadius: "var(--radius-md)",
+                            border: "none",
+                            background: isActive ? "var(--cyan-glow-sm)" : "transparent",
+                            color: isActive ? "var(--cyan)" : "var(--text-secondary)",
+                            cursor: "pointer",
+                            fontSize: "13px",
+                            fontFamily: "var(--font-display)",
+                            fontWeight: isActive ? 600 : 400,
+                            textAlign: "left",
+                            minHeight: "var(--touch-target)",
+                            transition: "var(--transition)",
+                            borderLeft: isActive ? "2px solid var(--cyan)" : "2px solid transparent",
+                          }}
+                        >
+                          <span aria-hidden="true" style={{ fontSize: "16px", minWidth: "20px", textAlign: "center" }}>
+                            {item.icon}
+                          </span>
+                          {item.title}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
               </li>
             );
           })}

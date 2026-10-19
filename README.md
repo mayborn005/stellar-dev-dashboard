@@ -1,132 +1,86 @@
-closes #550
-
 # Stellar Dev Dashboard
 
-A real-time developer dashboard for the Stellar network with advanced features including AI-enhanced transaction fee prediction.
+Real-time developer dashboard for the Stellar network: accounts, contracts, fees, activity, and tooling.
 
-## AI-Enhanced Transaction Fee Prediction (Feature #535)
+Full guides live in the docs site under docs-site/. This README is only the entry point.
 
-The fee prediction system uses machine learning to provide optimal transaction fee recommendations.
+## Requirements
 
-### Key Features
+- Node.js: 22.x to 26.x (engines: >=22 <27)
+- pnpm: 9+ (this repo package manager)
 
-1. **Real-time Fee Predictions**: ML models predict optimal fees based on network conditions
-2. **Priority-based Recommendations**: Users can specify confirmation time targets (slow, standard, priority, instant)
-3. **Accuracy Tracking**: Historical accuracy is tracked to improve predictions over time
-4. **Multi-model Architecture**: Combines Isolation Forest for anomaly detection with TFJS classifiers for pattern recognition
+Install:
 
-### Integration Points
+    corepack enable
+    pnpm install
+    pnpm run check:node
+    pnpm run check:package-manager
 
-- **Fee Prediction API**: Accessible via `/api/v1/transactions/fee-prediction`
-- **Transaction Builder Integration**: Automatic fee optimization in `buildTransaction` and `simulateTransaction`
-- **Real-time Monitoring**: Continuous network state updates via WebSocket
+Supported: Node 22-26 with pnpm 9+ and the repo lockfile.
+Unsupported: npm or yarn as the main install path, or Node outside that range.
+If package-lock.json appears, remove it before install.
 
-### Technical Implementation
+## Quick start
 
-1. **FeePredictor Class** (`src/lib/feePredictor.ts`):
-   - Extensible fee prediction models using ML
-   - Network condition monitoring
-   - Real-time feature extraction
-   - Alternative fee generation (slow, standard, priority, emergency)
+    git clone https://github.com/Nanle-code/stellar-dev-dashboard.git
+    cd stellar-dev-dashboard
+    corepack enable
+    pnpm install
+    pnpm dev
 
-2. **FeePredictionIntegration Service** (`src/lib/feePredictionIntegration.ts`):
-   - Caches predictions for performance
-   - Tracks historical accuracy
-   - Updates predictions based on network changes
-   - Provides metrics for model improvement
+Open the URL Vite prints (usually http://localhost:5173).
 
-3. **Enhanced Pattern Analysis** (`src/lib/transactionPatternAnalysis.ts`):
-   - Extended documentation for fee prediction enhancements
-   - Additional ML model training capabilities
+Useful commands:
 
-### API Usage
+- pnpm dev — local app
+- pnpm test — unit tests
+- pnpm run type-check — TypeScript
+- pnpm run build — production build
 
-```typescript
-// Basic fee prediction
-const { FeePredictor } = await import('./lib/feePredictor')
+## Features
 
-const predictor = new FeePredictor()
-const prediction = await predictor.predictFee({
-  operations: [paymentOp, ...],
-  userPreferences: { targetConfirmationTime: 'priority' }
-})
+- Network-aware account and contract views
+- Transaction building and simulation helpers
+- Fee insights and related tooling
+- Demo / read-only explore flows where enabled
 
-// Transaction builder integration
-const { FeePredictionIntegration } = await import('./lib/feePredictionIntegration')
+Details and how-tos are in docs-site, not in long root markdown files.
 
-const integration = new FeePredictionIntegration({
-  enableRealTimeMonitoring: true,
-  cachePredictions: true
-})
+## Documentation
 
-const { transaction, prediction } = await integration.predictFeeForTransaction({
-  sourceAccount: 'GD...',
-  operations: [paymentOp, ...],
-  userPreferences: { targetConfirmationTime: 'instant' }
-})
-```
+- Docs site: docs-site/
+- Contributing: CONTRIBUTING.md
+- Security: SECURITY.md
+- Code of conduct: CODE_OF_CONDUCT.md
+- Changelog: CHANGELOG.md
 
-### Models Performance
+Root one-off guides were moved under docs-site/docs so there is one navigable docs home.
 
-- **Historical Accuracy**: 95% within 10% of actual fees
-- **Prediction Latency**: < 50ms for real-time recommendations
-- **Model Updates**: Automatic retraining based on accumulated feedback
+## Architecture: Shared Core Package
 
-### Configuration
+Since 2026, platform-agnostic Stellar logic is extracted into a shared workspace package:
 
+- **`packages/core/`** — `@stellar-dev-dashboard/core`
+  - Network configuration (`NETWORKS`, `getServer`, `getSorobanServer`)
+  - Validation (addresses, amounts, memos, contracts, URLs)
+  - Formatters (XLM, addresses, stroops, dates, relative time)
+  - Address utilities (validation, resolution, SEP-29 memo check)
+  - Reserve calculations
+  - Operation labels
+  - High-level services (`fetchAccount`, `fetchTransactions`, `fetchNetworkStats`, `fetchXLMPrice`)
+  - Comprehensive test suite
 
+- **Web app (`src/`)** — Imports from `@stellar-dev-dashboard/core`, keeps web-specific code (rate limiting, request coalescing, browser storage, network probing)
+- **Mobile app (`mobile/`)** — Imports from `@stellar-dev-dashboard/core`, keeps mobile-specific code (AsyncStorage caching, React Native hooks)
 
-## ML Training Pipeline
+This eliminates parity issues (#883) by ensuring both platforms share identical validation, formatting, and data-access logic.
 
-The ML training pipeline is configured as follows:
+See `packages/core/README.md` for full API reference and migration notes.
 
-```bash
-# Train models
-npm run ml:train
+## License
 
-# Start scoring server
-npm run ml:server
-```
-
-The training uses historical transaction data to train:
-1. Isolation Forest for anomaly detection
-2. TensorFlow.js classifier for pattern recognition
-3. Fee-specific prediction models
-
-## Testing
-
-Run tests to verify the fee prediction functionality:
-
-```bash
-# Unit tests for fee prediction
-npm run test:unit
-
-# Integration tests
-npm run test:integration
-
-# Run ML-specific tests
-npm run test -w src/lib/feePredictor.ts -w src/lib/feePredictionIntegration.ts
-```
-
-## Development
-
-### Adding New Prediction Models
-
-Create a new model by:
-1. Implementing `FeeModel` interface in `src/lib/feePredictor.ts`
-2. Adding it to the `FeePredictor` class
-3. Registering it in the model registry
-
-### Improving Accuracy
-
-1. Collect prediction accuracy data
-2. Use `FeePredictor.updateAccuracy()` with actual vs predicted values
-3. Trigger model retraining when accuracy falls below threshold
-4. Configure automatic retraining in production
-
-### API Extensions
-
-Add new endpoints by:
-1. Creating new routes in `api/routes/transactions.js`
-2. Implementing handlers in `src/lib/feePredictionIntegration.ts`
-3. Updating TypeScript definitions in TypeScript types
+### SEP-38 Integration
+- **Quotes**: Added support for SEP-38 Quotes API. Now discovers ANCHOR_QUOTE_SERVER and can retrieve /info, /prices, /price and request authenticated /quote.
+- **Security**: Authentication leverages SEP-10 tokens for quotes. Be aware that tokens can expire, and quotes have an expiration window handled gracefully with a countdown timer.
+...
+...
